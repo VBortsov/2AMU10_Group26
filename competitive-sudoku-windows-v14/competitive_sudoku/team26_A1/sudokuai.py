@@ -73,6 +73,48 @@ class SudokuAI(competitive_sudoku.sudokuai.SudokuAI):
                     moves.append(Move(square, value))
 
         return moves  
+    #using difference
+    def evaluation_function_difference(self, game_state:GameState, ai_pl:int) -> float:
+        scores = game_state.scores
+        opponent = 3- ai_pl
+        return scores[ai_pl - 1] - scores[opponent - 1]
+
+    #helper for evaluation function
+    def count_accessible_squares(self, game_state: GameState, player:int) -> int:
+        board = game_state.board
+        N = board.N
+        if player ==1:
+            occupied = game_state.occupied_squares1
+            starting_row = 0
+        else:
+            occupied = game_state.occupied_squares2
+            starting_row = N-1
+        count = 0
+
+        for row in range(N):
+            for col in range(N):
+                if board.get((row, col)) != SudokuBoard.empty:
+                    continue
+                if row == starting_row:
+                    count+=1
+                    continue
+                for r,c in occupied:
+                    if abs(row - r) <=1 and abs(col - c) <=1:
+                        count+=1
+                        break
+
+        return count
+
+    #better function
+    def evaluation_function(self, game_state: GameState, ai_player:int) -> float:
+        opponent = 3 - ai_player
+        score_diff = (game_state.scores[ai_player-1] - game_state.scores[opponent-1])
+        mobility_ai = self.count_accessible_squares(game_state,ai_player)
+        mobility_opponent = self.count_accessible_squares(game_state,opponent)
+        mobility_diff = mobility_ai - mobility_opponent
+        return score_diff + 0.1 * mobility_diff #0.1 can be adjusted
+
+
 
     # N.B. This is a very naive implementation.
     def compute_best_move(self, game_state: GameState) -> None:
