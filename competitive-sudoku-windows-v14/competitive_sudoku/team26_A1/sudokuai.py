@@ -1,3 +1,7 @@
+#  (C) Copyright Wieger Wesselink 2021. Distributed under the GPL-3.0-or-later
+#  Software License, (See accompanying file LICENSE or copy at
+#  https://www.gnu.org/licenses/gpl-3.0.txt)
+
 from math import inf
 from operator import itemgetter
 
@@ -91,9 +95,16 @@ class _Search:
         for region in self.regions[index]:
             self.region_digits[region] ^= digit
 
+    def count_accessible_squares(self, player):
+        return (self.empty & self.allowed[player]).bit_count()
+
+    def evaluate(self, player, score):
+        mobility = self.count_accessible_squares(player) - self.count_accessible_squares(1 - player)
+        return score + 0.1 * mobility
+
     def alpha_beta(self, player, score, depth, alpha, beta, moves=None, passed=False):
         if depth == 0 or not self.empty:
-            return score, None
+            return self.evaluate(player, score), None
 
         if moves is None:
             moves = sorted(self.legal_moves(player), key=itemgetter(2), reverse=True)
@@ -124,6 +135,24 @@ class _Search:
 
 
 class SudokuAI(BaseSudokuAI):
+    def generate_moves(self, game_state: GameState) -> list[Move]:
+        player = game_state.current_player - 1
+        return [
+            Move(game_state.board.index2square(index), digit.bit_length())
+            for index, digit, _ in _Search(game_state).legal_moves(player)
+        ]
+
+    def evaluation_function_difference(self, game_state: GameState, ai_pl: int) -> float:
+        opponent = 3 - ai_pl
+        return game_state.scores[ai_pl - 1] - game_state.scores[opponent - 1]
+
+    def count_accessible_squares(self, game_state: GameState, player: int) -> int:
+        return _Search(game_state).count_accessible_squares(player - 1)
+
+    def evaluation_function(self, game_state: GameState, ai_player: int) -> float:
+        score = self.evaluation_function_difference(game_state, ai_player)
+        return _Search(game_state).evaluate(ai_player - 1, score)
+
     def compute_best_move(self, game_state: GameState) -> None:
         search = _Search(game_state)
         player = game_state.current_player - 1
@@ -142,7 +171,7 @@ class SudokuAI(BaseSudokuAI):
             return
 
         root_moves.sort(key=itemgetter(2), reverse=True)
-        score = game_state.scores[player] - game_state.scores[1 - player]
+        score = self.evaluation_function_difference(game_state, game_state.current_player)
         for depth in range(1, search.empty.bit_count() + 1):
             _, move = search.alpha_beta(player, score, depth, -inf, inf, moves=root_moves)
             if move != best_move:
