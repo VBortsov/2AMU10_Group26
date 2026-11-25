@@ -141,3 +141,17 @@ class SudokuAI(competitive_sudoku.sudokuai.SudokuAI):
 
         self.propose_move(random.choice(moves))
 
+
+from .alpha_beta import count_accessible_squares as _count_accessible_squares
+from .alpha_beta import search_best_move as _search_best_move
+
+
+class AlphaBetaSudokuAI(SudokuAI):
+    def count_accessible_squares(self, game_state: GameState, player: int) -> int:
+        return _count_accessible_squares(game_state, player)
+
+    def compute_best_move(self, game_state: GameState) -> None:
+        _search_best_move(self, game_state)
+
+
+SudokuAI = AlphaBetaSudokuAI
