@@ -2,181 +2,142 @@
 #  Software License, (See accompanying file LICENSE or copy at
 #  https://www.gnu.org/licenses/gpl-3.0.txt)
 
-from math import inf
-from operator import itemgetter
-
-from competitive_sudoku.sudoku import GameState, Move, SudokuBoard
-from competitive_sudoku.sudokuai import SudokuAI as BaseSudokuAI
-
-
-POINTS = (0, 1, 3, 7)
+import random
+import time
+from competitive_sudoku.sudoku import GameState, Move, SudokuBoard, TabooMove
+import competitive_sudoku.sudokuai
 
 
-class _Search:
-    def __init__(self, game_state):
-        board = game_state.board
-        size = board.N
-        blocks_per_row = size // board.n
-        self.all_digits = (1 << size) - 1
-        self.almost_full = size - 1
-        self.empty = 0
-        self.regions = []
-        self.neighbors = []
-        self.region_digits = [0] * (3 * size)
-        self.taboo_digits = [0] * (size * size)
+class SudokuAI(competitive_sudoku.sudokuai.SudokuAI):
+    """
+    Sudoku AI that computes a move for a given sudoku configuration.
+    """
 
-        for index, value in enumerate(board.squares):
-            row, col = board.index2square(index)
-            block = (row // board.m) * blocks_per_row + col // board.n
-            regions = (row, size + col, 2 * size + block)
-            self.regions.append(regions)
-            self.neighbors.append(sum(
-                1 << board.square2index((r, c))
-                for r in range(max(0, row - 1), min(size, row + 2))
-                for c in range(max(0, col - 1), min(size, col + 2))
-                if (r, c) != (row, col)
-            ))
+    def __init__(self):
+        super().__init__()
 
-            if value == SudokuBoard.empty:
-                self.empty |= 1 << index
-            else:
-                for region in regions:
-                    self.region_digits[region] |= 1 << (value - 1)
-
-        for move in game_state.taboo_moves:
-            self.taboo_digits[board.square2index(move.square)] |= 1 << (move.value - 1)
-
-        self.allowed = [
-            self._allowed_mask(board, game_state.allowed_squares1, game_state.occupied_squares1),
-            self._allowed_mask(board, game_state.allowed_squares2, game_state.occupied_squares2),
-        ]
-
-    def _allowed_mask(self, board, starting_squares, occupied_squares):
-        if starting_squares is None:
-            return self.empty
-        allowed = 0
-        for square in starting_squares:
-            allowed |= 1 << board.square2index(square)
-        for square in occupied_squares or ():
-            allowed |= self.neighbors[board.square2index(square)]
-        return allowed
-
-    def legal_moves(self, player):
-        squares = self.empty & self.allowed[player]
-        while squares:
-            square = squares & -squares
-            squares ^= square
-            index = square.bit_length() - 1
-            row, col, block = self.regions[index]
-            row_digits = self.region_digits[row]
-            col_digits = self.region_digits[col]
-            block_digits = self.region_digits[block]
-            unavailable = row_digits | col_digits | block_digits | self.taboo_digits[index]
-            digits = self.all_digits & ~unavailable
-            completed = ((row_digits.bit_count() == self.almost_full)
-                         + (col_digits.bit_count() == self.almost_full)
-                         + (block_digits.bit_count() == self.almost_full))
-            while digits:
-                digit = digits & -digits
-                digits ^= digit
-                yield index, digit, POINTS[completed]
-
-    def play(self, player, index, digit):
-        previous_allowed = self.allowed[player]
-        self.allowed[player] |= self.neighbors[index]
-        self.empty ^= 1 << index
-        for region in self.regions[index]:
-            self.region_digits[region] |= digit
-        return previous_allowed
-
-    def undo(self, player, index, digit, previous_allowed):
-        self.allowed[player] = previous_allowed
-        self.empty |= 1 << index
-        for region in self.regions[index]:
-            self.region_digits[region] ^= digit
-
-    def count_accessible_squares(self, player):
-        return (self.empty & self.allowed[player]).bit_count()
-
-    def evaluate(self, player, score):
-        mobility = self.count_accessible_squares(player) - self.count_accessible_squares(1 - player)
-        return score + 0.1 * mobility
-
-    def alpha_beta(self, player, score, depth, alpha, beta, moves=None, passed=False):
-        if depth == 0 or not self.empty:
-            return self.evaluate(player, score), None
-
-        if moves is None:
-            moves = sorted(self.legal_moves(player), key=itemgetter(2), reverse=True)
-        opponent = 1 - player
-        if not moves:
-            if passed:
-                return score, None
-            value, _ = self.alpha_beta(opponent, -score, depth, -beta, -alpha, passed=True)
-            return -value, None
-
-        best_score = -inf
-        best_move = None
-        for move in moves:
-            index, digit, points = move
-            previous_allowed = self.play(player, index, digit)
-            value, _ = self.alpha_beta(opponent, -score - points, depth - 1, -beta, -alpha)
-            self.undo(player, index, digit, previous_allowed)
-            value = -value
-
-            if value > best_score:
-                best_score = value
-                best_move = move
-            alpha = max(alpha, value)
-            if alpha >= beta:
-                break
-
-        return best_score, best_move
-
-
-class SudokuAI(BaseSudokuAI):
     def generate_moves(self, game_state: GameState) -> list[Move]:
-        player = game_state.current_player - 1
-        return [
-            Move(game_state.board.index2square(index), digit.bit_length())
-            for index, digit, _ in _Search(game_state).legal_moves(player)
-        ]
+        board = game_state.board
+        N = board.N
+        m = board.m
+        n = board.n
 
-    def evaluation_function_difference(self, game_state: GameState, ai_pl: int) -> float:
-        opponent = 3 - ai_pl
-        return game_state.scores[ai_pl - 1] - game_state.scores[opponent - 1]
+        allowed_squares = game_state.player_squares()
+        moves = []
 
-    def count_accessible_squares(self, game_state: GameState, player: int) -> int:
-        return _Search(game_state).count_accessible_squares(player - 1)
+        for row in range (N):
+            for col in range(N):
+                square = (row, col)
 
-    def evaluation_function(self, game_state: GameState, ai_player: int) -> float:
-        score = self.evaluation_function_difference(game_state, ai_player)
-        return _Search(game_state).evaluate(ai_player - 1, score)
+                # None means all squares are accessible.
+                # Skip squares the current player cannot access
+                if allowed_squares is not None:
+                    if square not in allowed_squares:
+                        continue
 
+                # skip squares that already contain a number.
+                if board.get(square) != SudokuBoard.empty:
+                    continue
+
+                row_values = {
+                    board.get((row, c))
+                    for c in range(N)
+                }
+
+                column_values = {
+                    board.get((r, col))
+                    for r in range(N)
+                }
+
+                # Retrieve top-left square of this square's block
+                block_row = (row // m) * m
+                block_col = (col // n) * n
+
+                # Collect values already present in the block
+                block_values = {
+                    board.get((r, c))
+                    for r in range(block_row, block_row + m)
+                    for c in range(block_col, block_col + n)
+                }
+
+                used_values = row_values | column_values | block_values
+                
+                for value in range(1, N+1):
+                    if value in used_values:
+                        # Reject row, column, or block duplicates.
+                        continue
+                    if TabooMove(square, value) in game_state.taboo_moves:
+                        # Reject moves already declared taboo.
+                        continue
+
+                    moves.append(Move(square, value))
+
+        return moves  
+    #using difference
+    def evaluation_function_difference(self, game_state:GameState, ai_pl:int) -> float:
+        scores = game_state.scores
+        opponent = 3- ai_pl
+        return scores[ai_pl - 1] - scores[opponent - 1]
+
+    #helper for evaluation function
+    def count_accessible_squares(self, game_state: GameState, player:int) -> int:
+        board = game_state.board
+        N = board.N
+        if player ==1:
+            occupied = game_state.occupied_squares1
+            starting_row = 0
+        else:
+            occupied = game_state.occupied_squares2
+            starting_row = N-1
+        count = 0
+
+        for row in range(N):
+            for col in range(N):
+                if board.get((row, col)) != SudokuBoard.empty:
+                    continue
+                if row == starting_row:
+                    count+=1
+                    continue
+                for r,c in occupied:
+                    if abs(row - r) <=1 and abs(col - c) <=1:
+                        count+=1
+                        break
+
+        return count
+
+    #better function
+    def evaluation_function(self, game_state: GameState, ai_player:int) -> float:
+        opponent = 3 - ai_player
+        score_diff = (game_state.scores[ai_player-1] - game_state.scores[opponent-1])
+        mobility_ai = self.count_accessible_squares(game_state,ai_player)
+        mobility_opponent = self.count_accessible_squares(game_state,opponent)
+        mobility_diff = mobility_ai - mobility_opponent
+        return score_diff + 0.1 * mobility_diff #0.1 can be adjusted
+
+
+
+    # N.B. This is a very naive implementation.
     def compute_best_move(self, game_state: GameState) -> None:
-        search = _Search(game_state)
-        player = game_state.current_player - 1
-        moves = search.legal_moves(player)
-        best_move = next(moves, None)
-        if best_move is None:
+        # N = game_state.board.N
+
+        # # Check whether a cell is empty, a value in that cell is not taboo, and that cell is allowed
+        # def possible(i, j, value):
+        #     return game_state.board.get((i, j)) == SudokuBoard.empty \
+        #            and not TabooMove((i, j), value) in game_state.taboo_moves \
+        #                and (i, j) in game_state.player_squares()
+
+        # all_moves = [Move((i, j), value) for i in range(N) for j in range(N)
+        #              for value in range(1, N+1) if possible(i, j, value)]
+        # move = random.choice(all_moves)
+        # self.propose_move(move)
+        # while True:
+        #     time.sleep(0.2)
+        #     self.propose_move(random.choice(all_moves))
+
+        moves = self.generate_moves(game_state)
+
+        if not moves:
             return
 
-        def propose(move):
-            index, digit, _ = move
-            self.propose_move(Move(game_state.board.index2square(index), digit.bit_length()))
+        self.propose_move(random.choice(moves))
 
-        propose(best_move)
-        root_moves = [best_move, *moves]
-        if len(root_moves) == 1:
-            return
-
-        root_moves.sort(key=itemgetter(2), reverse=True)
-        score = self.evaluation_function_difference(game_state, game_state.current_player)
-        for depth in range(1, search.empty.bit_count() + 1):
-            _, move = search.alpha_beta(player, score, depth, -inf, inf, moves=root_moves)
-            if move != best_move:
-                best_move = move
-                propose(move)
-            if move != root_moves[0]:
-                root_moves.remove(move)
-                root_moves.insert(0, move)
