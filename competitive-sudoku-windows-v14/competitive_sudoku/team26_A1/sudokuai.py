@@ -61,7 +61,7 @@ class SudokuAI(competitive_sudoku.sudokuai.SudokuAI):
                 }
 
                 used_values = row_values | column_values | block_values
-                
+
                 for value in range(1, N+1):
                     if value in used_values:
                         # Reject row, column, or block duplicates.
@@ -72,7 +72,7 @@ class SudokuAI(competitive_sudoku.sudokuai.SudokuAI):
 
                     moves.append(Move(square, value))
 
-        return moves  
+        return moves
     #using difference
     def evaluation_function_difference(self, game_state:GameState, ai_pl:int) -> float:
         scores = game_state.scores
@@ -135,23 +135,18 @@ class SudokuAI(competitive_sudoku.sudokuai.SudokuAI):
         #     self.propose_move(random.choice(all_moves))
 
         moves = self.generate_moves(game_state)
-
         if not moves:
             return
-
         self.propose_move(random.choice(moves))
+        alpha_beta.refine_best_move(self, game_state, moves)
 
 
-from .alpha_beta import count_accessible_squares as _count_accessible_squares
-from .alpha_beta import search_best_move as _search_best_move
+from . import alpha_beta
 
 
-class AlphaBetaSudokuAI(SudokuAI):
+class AlphaBetaSudokuMyVersion(SudokuAI):
     def count_accessible_squares(self, game_state: GameState, player: int) -> int:
-        return _count_accessible_squares(game_state, player)
-
-    def compute_best_move(self, game_state: GameState) -> None:
-        _search_best_move(self, game_state)
+        return alpha_beta.count_accessible_squares(game_state, player)
 
 
-SudokuAI = AlphaBetaSudokuAI
+SudokuAI = AlphaBetaSudokuMyVersion
